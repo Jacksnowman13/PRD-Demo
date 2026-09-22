@@ -1,0 +1,1059 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conversion Warning Prototype</title>
+<meta name="description" content="Concept prototype: warn users when changing a column type during file upload silently turns values into NULL.">
+<style>
+/* Color tokens follow the public @databricks/design-system (DuBois) light and dark semantic palettes */
+:root{
+  --bg:#F7F7F7;--panel:#FFFFFF;--panel-2:#F7F7F7;--border:#EBEBEB;--border-strong:#CBCBCB;
+  --text:#161616;--muted:#6F6F6F;--faint:#939393;
+  --link:#2272B4;--link-hover:#0E538B;
+  --primary:#2272B4;--primary-hover:#0E538B;--primary-text:#FFFFFF;
+  --hover:rgba(34,114,180,.08);--row-hover:rgba(82,82,82,.04);--nav-hover:rgba(82,82,82,.06);
+  --active-nav:rgba(34,114,180,.08);--active-nav-text:#0E538B;--focus:#2272B4;
+  --warn:#BE501E;--warn-border:#F8D4A5;--warn-soft:#FFF9EB;
+  --err:#C82D4C;--err-border:#FBD0D8;--err-soft:#FFF5F7;
+  --ok:#277C43;--ok-border:#B1ECC5;--ok-soft:#F3FCF6;
+  --info-border:#C0CDD8;--code-bg:rgba(82,82,82,.08);
+  --disabled-bg:#EBEBEB;--disabled-text:#A2A2A2;
+  --menu-bg:#FFFFFF;--scrim:rgba(0,0,0,.26);
+  --shadow-lg:0 2px 16px rgba(0,0,0,.08);--shadow-xl:0 8px 40px rgba(0,0,0,.13);
+  --proto:#6B45B8;--proto-bg:#F4EFFB;--proto-border:#CDB9EE;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#1F272D;--panel:#11171C;--panel-2:#1F272D;--border:#1F272D;--border-strong:#37444F;
+    --text:#E8ECF0;--muted:#92A4B3;--faint:#8396A5;
+    --link:#4299E0;--link-hover:#8ACAFF;
+    --primary:#4299E0;--primary-hover:#8ACAFF;--primary-text:#11171C;
+    --hover:rgba(138,202,255,.08);--row-hover:rgba(189,205,219,.04);--nav-hover:rgba(189,205,219,.06);
+    --active-nav:#2A343D;--active-nav-text:#8ACAFF;--focus:#8ACAFF;
+    --warn:#DE7921;--warn-border:#F8D4A5;--warn-soft:rgba(190,80,30,.16);
+    --err:#E65B77;--err-border:#FBD0D8;--err-soft:rgba(200,45,76,.16);
+    --ok:#3BA65E;--ok-border:#B1ECC5;--ok-soft:rgba(39,124,67,.16);
+    --info-border:#C0CDD8;--code-bg:#37444F;
+    --disabled-bg:#37444F;--disabled-text:#5F7281;
+    --menu-bg:#11171C;--scrim:rgba(0,0,0,.45);
+    --shadow-lg:0 2px 16px rgba(0,0,0,.61);--shadow-xl:0 8px 40px rgba(0,0,0,.87);
+    --proto:#C3A8F0;--proto-bg:rgba(138,99,191,.14);--proto-border:rgba(160,125,215,.5);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#1F272D;--panel:#11171C;--panel-2:#1F272D;--border:#1F272D;--border-strong:#37444F;
+  --text:#E8ECF0;--muted:#92A4B3;--faint:#8396A5;
+  --link:#4299E0;--link-hover:#8ACAFF;
+  --primary:#4299E0;--primary-hover:#8ACAFF;--primary-text:#11171C;
+  --hover:rgba(138,202,255,.08);--row-hover:rgba(189,205,219,.04);--nav-hover:rgba(189,205,219,.06);
+  --active-nav:#2A343D;--active-nav-text:#8ACAFF;--focus:#8ACAFF;
+  --warn:#DE7921;--warn-border:#F8D4A5;--warn-soft:rgba(190,80,30,.16);
+  --err:#E65B77;--err-border:#FBD0D8;--err-soft:rgba(200,45,76,.16);
+  --ok:#3BA65E;--ok-border:#B1ECC5;--ok-soft:rgba(39,124,67,.16);
+  --info-border:#C0CDD8;--code-bg:#37444F;
+  --disabled-bg:#37444F;--disabled-text:#5F7281;
+  --menu-bg:#11171C;--scrim:rgba(0,0,0,.45);
+  --shadow-lg:0 2px 16px rgba(0,0,0,.61);--shadow-xl:0 8px 40px rgba(0,0,0,.87);
+  --proto:#C3A8F0;--proto-bg:rgba(138,99,191,.14);--proto-border:rgba(160,125,215,.5);
+}
+
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--text);font:13px/20px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;overflow:hidden}
+button,input,select{font:inherit;color:inherit}
+svg{flex:none;display:block}
+:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+[hidden]{display:none !important}
+b{font-weight:600}
+
+.shell{display:flex;flex-direction:column;height:100vh;height:100dvh}
+
+/* ---------- prototype chrome (deliberately distinct from the product UI) ---------- */
+.proto-bar{flex:none;display:flex;align-items:center;gap:10px;min-height:36px;padding:5px 12px;background:var(--proto-bg);border-bottom:1px dashed var(--proto-border);font-size:12px;line-height:16px;flex-wrap:wrap}
+.proto-tag{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:999px;border:1px solid var(--proto-border);color:var(--proto);font-weight:600;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap}
+.proto-text{color:var(--muted);min-width:0;flex:1 1 240px}
+.proto-text b{color:var(--text)}
+.seg{display:inline-flex;border:1px solid var(--proto-border);border-radius:6px;overflow:hidden;flex:none}
+.seg button{border:0;background:none;padding:3px 10px;cursor:pointer;color:var(--muted)}
+.seg button+button{border-left:1px solid var(--proto-border)}
+.seg button[aria-pressed="true"]{background:var(--proto);color:var(--panel);font-weight:600}
+.proto-btn{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border:1px solid var(--proto-border);border-radius:6px;background:none;cursor:pointer;color:var(--proto);flex:none}
+.proto-btn:hover{background:var(--proto-bg)}
+.proto-btn .count{color:var(--muted)}
+
+/* ---------- app shell ---------- */
+.topbar{flex:none;height:48px;display:flex;align-items:center;gap:8px;padding:0 12px 0 8px;background:var(--bg)}
+.icon-btn{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:0;border-radius:4px;background:none;color:var(--muted);cursor:pointer}
+.icon-btn:hover{background:var(--hover);color:var(--link-hover)}
+.brand{display:flex;align-items:center;gap:8px;font-weight:600;font-size:15px;white-space:nowrap;margin:0 12px 0 4px}
+.brand-sub{color:var(--muted);font-weight:400}
+.search{flex:1;max-width:600px;margin:0 auto;display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;border:1px solid var(--border-strong);border-radius:4px;background:var(--panel);color:var(--muted)}
+.search input{flex:1;min-width:0;border:0;background:none;outline:none;color:var(--text)}
+.search input::placeholder{color:var(--faint)}
+.kbd{font-size:12px;color:var(--faint);white-space:nowrap}
+.top-right{display:flex;align-items:center;gap:4px;margin-left:auto}
+.ws{display:inline-flex;align-items:center;gap:4px;height:32px;padding:0 8px;border-radius:4px;background:none;border:0;cursor:pointer}
+.ws:hover{background:var(--hover)}
+.avatar{width:26px;height:26px;border-radius:50%;background:#B8672E;color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:600;font-size:12px;margin-left:4px}
+
+.frame{flex:1;display:flex;min-height:0}
+.sidebar{width:208px;flex:none;overflow-y:auto;padding:4px 8px 16px;background:var(--bg)}
+.shell.nav-closed .sidebar{display:none}
+.new-btn{display:flex;align-items:center;gap:8px;width:100%;height:32px;padding:0 10px;margin:0 0 10px;border:0;border-radius:4px;background:var(--nav-hover);cursor:pointer}
+.new-btn:hover{background:var(--hover)}
+.new-btn svg{color:var(--link)}
+.nav-h{margin:14px 8px 2px;font-size:12px;color:var(--muted)}
+.nav a{display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;border-radius:4px;color:var(--text);text-decoration:none;white-space:nowrap}
+.nav a svg{color:var(--muted)}
+.nav a:hover{background:var(--nav-hover)}
+.nav a[aria-current="page"]{background:var(--active-nav);color:var(--active-nav-text)}
+.nav a[aria-current="page"] svg{color:var(--active-nav-text)}
+
+.main{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--panel);border-top-left-radius:8px;box-shadow:0 0 0 1px var(--border)}
+.page{flex:1;min-height:0;display:flex;flex-direction:column;padding:16px 24px 0}
+
+/* ---------- page header & form ---------- */
+.crumb{display:flex;align-items:center;gap:2px;color:var(--link)}
+.crumb a{color:inherit;text-decoration:none}
+.crumb a:hover{color:var(--link-hover)}
+.crumb svg{color:var(--muted)}
+.title-row{display:flex;align-items:center;gap:12px;margin:4px 0 16px;flex-wrap:wrap}
+h1{font-size:22px;line-height:28px;font-weight:600;margin:0;flex:1;min-width:240px}
+.wh{display:flex;align-items:center;gap:8px;height:32px;padding:0 10px 0 12px;border:1px solid var(--border-strong);border-radius:4px;min-width:240px;cursor:pointer}
+.wh:hover{border-color:var(--focus)}
+.wh .dot{width:8px;height:8px;border-radius:50%;background:var(--ok)}
+.wh .grow{flex:1}
+.wh svg{color:var(--muted)}
+
+.row1{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1.2fr);gap:12px;margin-bottom:12px}
+.filechip{display:flex;align-items:center;gap:10px;height:40px;padding:0 6px 0 16px;border-radius:4px;background:var(--panel-2);min-width:0}
+.filechip b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.filechip .size{color:var(--text);white-space:nowrap}
+.filechip .icon-btn{margin-left:auto}
+.row2{display:grid;grid-template-columns:auto minmax(0,1fr) minmax(0,1fr) minmax(0,1.2fr) auto;gap:12px;align-items:end}
+.field label{display:block;font-weight:600;margin-bottom:4px}
+.sel{position:relative;display:block}
+.sel select,.sel input{width:100%;appearance:none;-webkit-appearance:none;height:32px;padding:0 30px 0 12px;border:1px solid var(--border-strong);border-radius:4px;background:transparent;color:var(--text);outline:none}
+.sel select option{background:var(--panel);color:var(--text)}
+.sel.has-icon select,.sel.has-icon input{padding-left:34px}
+.sel input{padding-right:12px}
+.sel select:hover,.sel input:hover,.sel select:focus,.sel input:focus{border-color:var(--focus)}
+.sel .lead{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--muted);pointer-events:none}
+.sel .chev{position:absolute;right:9px;top:50%;transform:translateY(-50%);color:var(--muted);pointer-events:none}
+.modes{display:inline-flex;height:32px}
+.modes button{width:40px;border:1px solid var(--border-strong);background:transparent;color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+.modes button:first-child{border-radius:4px 0 0 4px}
+.modes button:last-child{border-radius:0 4px 4px 0;border-left:0}
+.modes button[aria-pressed="true"]{border-color:var(--focus);background:var(--hover);color:var(--link-hover)}
+.modes button:disabled{cursor:not-allowed}
+.adv{height:32px;display:flex;align-items:center;color:var(--link);text-decoration:none;white-space:nowrap}
+.adv:hover{color:var(--link-hover)}
+
+.preview-meta{display:flex;align-items:center;justify-content:flex-end;gap:6px;color:var(--muted);margin:16px 0 8px}
+
+/* ---------- alert (DuBois Alert anatomy: severity icon, bold message, description, close) ---------- */
+#alertHost:empty{display:none}
+.alert{position:relative;display:flex;align-items:flex-start;gap:8px;padding:11px 12px;border:1px solid var(--warn-border);border-radius:4px;background:transparent;color:var(--warn);margin-top:16px}
+.alert.err{border-color:var(--err-border);color:var(--err)}
+.alert.ok{border-color:var(--ok-border);background:var(--ok-soft);color:var(--ok)}
+.alert.info{border-color:var(--info-border);color:var(--text)}
+.alert.info .alert-icon{color:var(--muted)}
+.alert-icon{display:inline-flex;align-items:center;height:20px}
+.alert-body{flex:1;min-width:0}
+.alert-title{font-weight:600}
+.alert-desc{margin-top:2px}
+.alert-close{flex:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;margin-left:8px;border:0;border-radius:4px;background:none;color:var(--muted);cursor:pointer}
+.alert-close:hover{color:var(--text);background:var(--hover)}
+.alert-rows{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:10px}
+.alert-rows li{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px}
+.alert-rows .ar-text{flex:1 1 380px;min-width:0}
+.code{display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:12px;line-height:18px;padding:0 5px;border-radius:4px;background:var(--code-bg);color:var(--text);white-space:nowrap;vertical-align:1px}
+.ar-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px}
+.alert-rows .ar-actions{margin-top:0}
+.alert-settings{display:flex;flex-wrap:wrap;align-items:center;gap:8px 20px;margin-top:12px;color:var(--text)}
+.inline-field{display:inline-flex;align-items:center;gap:8px}
+.inline-field .sel select{height:24px;width:auto;min-width:150px;padding:0 26px 0 8px}
+.inline-field .sel .chev{right:6px}
+.check{display:inline-flex;align-items:center;gap:8px;cursor:pointer}
+.check input{appearance:none;-webkit-appearance:none;width:16px;height:16px;margin:0;border:1px solid var(--muted);border-radius:4px;background:transparent;display:inline-grid;place-content:center;cursor:pointer}
+.check input:hover{border-color:var(--focus)}
+.check input:checked{background:var(--primary);border-color:var(--primary)}
+.check input:checked::after{content:"";width:8px;height:4px;border:2px solid var(--primary-text);border-top:0;border-right:0;transform:translateY(-1px) rotate(-45deg)}
+.mute-note{flex-basis:100%;color:var(--muted);margin-top:-4px}
+.pop{animation:pop .2s ease-out}
+@keyframes pop{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.pre{margin:6px 0 0;font-family:var(--mono);font-size:12px;line-height:18px;color:var(--text);background:var(--code-bg);padding:8px 10px;border-radius:4px;white-space:pre-wrap;word-break:break-word}
+.alert .meta{margin-top:6px}
+
+/* ---------- buttons ---------- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;border-radius:4px;border:1px solid var(--border-strong);background:transparent;color:var(--text);cursor:pointer;white-space:nowrap}
+.btn svg{color:var(--muted)}
+.btn:hover{background:var(--hover);border-color:var(--focus);color:var(--link-hover)}
+.btn:hover svg{color:var(--link-hover)}
+.btn.sm{height:24px;padding:0 8px}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:var(--primary-text)}
+.btn.primary:hover{background:var(--primary-hover);border-color:var(--primary-hover);color:var(--primary-text)}
+.btn:disabled,.btn:disabled:hover{background:var(--disabled-bg);border-color:var(--disabled-bg);color:var(--disabled-text);cursor:not-allowed}
+.btn.warn-btn svg{color:var(--warn)}
+.btn.err-btn svg{color:var(--err)}
+.link{border:0;background:none;padding:0;color:var(--link);cursor:pointer;text-align:left}
+.link:hover{color:var(--link-hover)}
+
+/* ---------- preview table ---------- */
+.table-wrap{flex:1;min-height:140px;overflow:auto}
+table{border-collapse:separate;border-spacing:0;width:100%}
+.preview{min-width:760px}
+.preview th{position:sticky;top:0;z-index:2;background:var(--panel-2);text-align:left;padding:0;font-weight:600}
+.th{display:flex;align-items:center;gap:6px;height:40px;padding:0 8px 0 12px;cursor:pointer;user-select:none}
+.th:hover{background:var(--hover)}
+.th-btn{display:inline-flex;align-items:center;gap:8px;border:0;background:none;padding:0;cursor:pointer;font-weight:600;min-width:0}
+.th-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.th-end{margin-left:auto;display:inline-flex;align-items:center;color:var(--muted)}
+.badge{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 6px;border-radius:4px;border:0;background:var(--warn-soft);color:var(--warn);font-size:12px;font-weight:600;cursor:pointer}
+.badge.err{background:var(--err-soft);color:var(--err)}
+.badge:hover{filter:brightness(1.15)}
+.preview td{height:34px;padding:0 12px;border-bottom:1px solid var(--border);white-space:nowrap}
+.preview tr:hover td{background:var(--row-hover)}
+.null{color:var(--muted);font-style:italic}
+.null.flagged{color:var(--warn);background:var(--warn-soft);padding:0 5px;border-radius:4px}
+.cell-err{display:inline-flex;align-items:center;gap:4px;color:var(--err);background:var(--err-soft);padding:0 5px;border-radius:4px;font-family:var(--mono);font-size:12px}
+.just-changed td.col-changed{animation:flash .9s ease-out}
+@keyframes flash{from{background:var(--hover)}to{background:transparent}}
+
+/* ---------- type icons ---------- */
+.ti{display:inline-flex;align-items:center;justify-content:center;width:20px;height:16px;color:var(--muted);font-size:10.5px;font-weight:700;letter-spacing:-.02em;line-height:1;flex:none}
+.ti .up{transform:translateY(-3px);font-size:9px}
+.ti .dn{transform:translateY(2px);font-size:9px}
+.ti.dec{font-size:11px;letter-spacing:0}
+
+/* ---------- type menu (dropdown) ---------- */
+.menu{position:fixed;z-index:60;min-width:208px;background:var(--menu-bg);border:1px solid var(--border);border-radius:4px;box-shadow:var(--shadow-lg);padding:4px 0}
+.menu button{display:flex;align-items:center;gap:12px;width:100%;height:32px;padding:0 12px;border:0;background:none;cursor:pointer;text-align:left;color:var(--text)}
+.menu button .ti{color:var(--text)}
+.menu button:hover,.menu button:focus-visible{background:var(--hover);outline:none}
+.menu button[aria-checked="true"]{background:var(--hover)}
+.menu .tick{margin-left:auto;color:var(--link)}
+
+.footer{flex:none;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 0}
+
+/* ---------- drawer ---------- */
+.scrim{position:fixed;inset:0;background:var(--scrim);z-index:40;opacity:0;pointer-events:none;transition:opacity .17s}
+.scrim.open{opacity:1;pointer-events:auto}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(560px,100vw);background:var(--panel);z-index:41;display:flex;flex-direction:column;transform:translateX(102%);transition:transform .2s ease-out;box-shadow:var(--shadow-xl);visibility:hidden}
+.drawer.open{transform:none;visibility:visible}
+.dr-head{display:flex;align-items:flex-start;gap:10px;padding:20px 16px 12px 24px}
+.dr-head h2{margin:0;font-size:18px;line-height:24px;font-weight:600}
+.dr-sub{display:flex;align-items:center;gap:8px;margin-top:6px;color:var(--muted);flex-wrap:wrap}
+.dr-head .icon-btn{margin-left:auto}
+.dr-sum{padding:0 24px 12px}
+.dr-sum .alert{margin-top:0}
+.dr-body{flex:1;overflow:auto}
+.dt th{position:sticky;top:0;background:var(--panel-2);text-align:left;font-weight:600;padding:0 12px;height:36px;white-space:nowrap}
+.dt td{padding:0 12px;height:34px;border-bottom:1px solid var(--border);white-space:nowrap}
+.dt tr:hover td{background:var(--row-hover)}
+.dt td:first-child,.dt th:first-child{padding-left:24px}
+.dt td:first-child{color:var(--muted)}
+.dt .arrow{color:var(--muted);width:28px;padding:0;text-align:center}
+.tag-null{display:inline-block;font-family:var(--mono);font-size:12px;line-height:18px;padding:0 6px;border-radius:4px;background:var(--warn-soft);color:var(--warn)}
+.tag-err{display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:12px;line-height:18px;padding:0 6px;border-radius:4px;background:var(--err-soft);color:var(--err)}
+.dr-more{padding:12px 24px;color:var(--muted);text-align:center}
+.dr-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 16px 12px 24px;border-top:1px solid var(--border)}
+.dr-foot .count{color:var(--muted)}
+.dr-foot .acts{display:flex;gap:8px}
+
+/* ---------- result page ---------- */
+.done{flex:1;overflow:auto;padding:24px 24px 40px}
+.done-inner{max-width:780px}
+.done-head{display:flex;align-items:center;gap:8px}
+.done-head svg{color:var(--ok)}
+.done h2{margin:0;font-size:22px;line-height:28px;font-weight:600}
+.fq{font-family:var(--mono);font-size:13px;margin:8px 0 0}
+.done .meta{color:var(--muted)}
+.schema{margin-top:16px}
+.schema th{background:var(--panel-2);text-align:left;font-weight:600;padding:0 12px;height:36px}
+.schema td{padding:0 12px;height:36px;border-bottom:1px solid var(--border)}
+.schema .tcell{display:inline-flex;align-items:center;gap:6px}
+.note-warn{display:inline-flex;align-items:center;gap:6px;color:var(--warn)}
+.done .acts{display:flex;gap:8px;margin-top:20px;flex-wrap:wrap}
+.annot{margin-top:24px;border:1px dashed var(--proto-border);background:var(--proto-bg);border-radius:8px;padding:14px 16px}
+.annot p{margin:6px 0 0}
+.annot .big{font-size:15px;line-height:22px;font-weight:600;margin-top:10px}
+.annot .btn{margin-top:12px}
+
+/* ---------- walkthrough (prototype chrome) ---------- */
+.guide{background:var(--panel);border:1px dashed var(--proto-border);border-radius:8px;padding:10px 12px 11px;font-size:12px;line-height:17px}
+.sidebar .guide{margin:18px 0 4px}
+.guide.floating{position:fixed;right:12px;bottom:72px;z-index:35;width:318px;max-width:calc(100vw - 24px);box-shadow:var(--shadow-lg)}
+.guide-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.guide-head .icon-btn{margin-left:auto;width:24px;height:24px}
+.guide ol{list-style:none;margin:0;padding:0}
+.guide li{display:flex;align-items:flex-start;gap:8px}
+.guide li + li{margin-top:7px}
+.guide .num{flex:none;display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border-radius:50%;border:1px solid var(--proto-border);color:var(--proto);font-size:10px;font-weight:600;line-height:1}
+.guide li.is-done{color:var(--muted)}
+.guide li.is-done .num{background:var(--proto);border-color:var(--proto);color:var(--panel)}
+.guide .fine{margin:10px 0 0;color:var(--muted);font-size:11px;line-height:15px}
+
+.spinner{width:14px;height:14px;border-radius:50%;border:2px solid var(--border-strong);border-top-color:var(--primary);animation:spin .7s linear infinite;flex:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion: reduce){.pop,.just-changed td.col-changed{animation:none}.drawer,.scrim{transition:none}.spinner{animation-duration:2s}}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* ---------- responsive ---------- */
+@media (max-width: 1100px){
+  .row2{grid-template-columns:auto minmax(0,1fr) minmax(0,1fr)}
+  .row2 .f-name{grid-column:1 / span 2}
+  .row2 .adv{grid-column:3}
+}
+@media (max-width: 900px){
+  .sidebar{display:none}
+  .shell.nav-open .sidebar{display:block;position:fixed;z-index:45;top:0;bottom:0;left:0;padding-top:12px;box-shadow:var(--shadow-xl)}
+  .main{border-radius:0}
+  .search{display:none}
+  .proto-text{flex-basis:100%;order:5}
+}
+@media (max-width: 700px){
+  body{overflow:auto}
+  .shell{height:auto;min-height:100dvh}
+  .page{padding:14px 16px 0}
+  .row1{grid-template-columns:1fr}
+  .row2{grid-template-columns:1fr 1fr}
+  .row2 .f-mode{display:none}
+  .row2 .f-name{grid-column:1 / -1}
+  .row2 .adv{grid-column:1 / -1;height:auto}
+  .wh{min-width:0;width:100%}
+  .table-wrap{flex:none;height:420px}
+  .ws span{display:none}
+  .brand-sub{display:none}
+  .done{padding:20px 16px 32px}
+  .footer{position:sticky;bottom:0;background:var(--panel);border-top:1px solid var(--border);margin:0 -16px;padding:12px 16px}
+  .guide.floating{right:12px;left:12px;width:auto}
+}
+</style>
+</head>
+<body>
+<div class="shell" id="shell">
+
+  <div class="proto-bar" role="region" aria-label="Prototype controls">
+    <span class="proto-tag">Concept prototype</span>
+    <span class="proto-text">Proposal: tell users when a column type change <b>silently turns values into NULL</b> during file upload.</span>
+    <div class="seg" role="group" aria-label="Which flow to show">
+      <button type="button" data-mode="proposed" aria-pressed="true">Proposed flow</button>
+      <button type="button" data-mode="current" aria-pressed="false">Today's flow</button>
+    </div>
+    <button type="button" class="proto-btn" id="guideBtn" aria-expanded="true" aria-controls="guide">Guide <span class="count" id="guideCount">0/5</span></button>
+    <button type="button" class="proto-btn" id="resetBtn">Reset</button>
+    <button type="button" class="proto-btn" id="themeBtn" aria-label="Switch to light theme"><span id="themeIcon"></span></button>
+  </div>
+
+  <header class="topbar">
+    <button type="button" class="icon-btn" id="navBtn" aria-label="Toggle sidebar" data-i="panel"></button>
+    <div class="brand"><span data-i="logo"></span><span>Data platform</span><span class="brand-sub">· demo</span></div>
+    <label class="search"><span data-i="search" data-s="16"></span><input type="search" placeholder="Search data, notebooks, recents, and more..." aria-label="Search"><span class="kbd">⌘ + P</span></label>
+    <div class="top-right">
+      <button type="button" class="ws"><span>workspace</span><span data-i="chevDown" data-s="14"></span></button>
+      <button type="button" class="icon-btn" aria-label="Apps" data-i="apps"></button>
+      <span class="avatar" aria-label="Signed in user">B</span>
+    </div>
+  </header>
+
+  <div class="frame">
+    <nav class="sidebar" aria-label="Main">
+      <button type="button" class="new-btn"><span data-i="plus"></span>New</button>
+      <div class="nav">
+        <a href="#" data-i="folder">Workspace</a>
+        <a href="#" data-i="clock">Recents</a>
+        <a href="#" data-i="db">Catalog</a>
+        <a href="#" data-i="flow">Jobs &amp; Pipelines</a>
+        <a href="#" data-i="cloud">Compute</a>
+        <div class="nav-h">SQL</div>
+        <a href="#" data-i="code">SQL Editor</a>
+        <a href="#" data-i="list">Queries</a>
+        <a href="#" data-i="grid">Dashboards</a>
+        <a href="#" data-i="history">Query History</a>
+        <div class="nav-h">Data Engineering</div>
+        <a href="#" data-i="runs">Runs</a>
+        <a href="#" data-i="ingest" aria-current="page">Data Ingestion</a>
+      </div>
+      <!-- guide (prototype chrome) -->
+      <div class="guide" id="guide" role="region" aria-label="Walkthrough">
+        <div class="guide-head"><span class="proto-tag">Walkthrough</span><button type="button" class="icon-btn" id="guideClose" aria-label="Hide walkthrough" data-i="x" data-s="14"></button></div>
+        <ol id="guideList"></ol>
+        <p class="fine">Concept prototype for a product proposal. Not affiliated with Databricks. All data is synthetic and stays in your browser.</p>
+      </div>
+    </nav>
+
+    <main class="main" id="main">
+      <!-- upload page -->
+      <section class="page" id="uploadPage" aria-labelledby="pageTitle">
+        <div class="crumb"><a href="#">Add data</a><span data-i="chevRight" data-s="14"></span></div>
+        <div class="title-row">
+          <h1 id="pageTitle">Create or modify table from files</h1>
+          <div class="wh" role="button" tabindex="0" aria-label="SQL warehouse"><span class="dot"></span><span class="grow">Serverless Warehouse</span><span data-i="chevDown" data-s="14"></span></div>
+        </div>
+
+        <div class="row1">
+          <div class="filechip"><b id="fileName"></b><span class="size" id="fileSize"></span><button type="button" class="icon-btn" aria-label="Remove file" data-i="x"></button></div>
+          <div class="sel"><select aria-label="Table action"><option>Create new table</option><option>Overwrite existing table</option></select><span class="chev" data-i="chevDown" data-s="14"></span></div>
+        </div>
+
+        <div class="row2">
+          <div class="field f-mode"><label>Preview mode</label>
+            <div class="modes"><button type="button" aria-pressed="true" aria-label="Table preview" data-i="table"></button><button type="button" aria-pressed="false" aria-label="Column list (not in this prototype)" title="Not part of this prototype" disabled data-i="list"></button></div>
+          </div>
+          <div class="field"><label for="cat">Catalog</label><div class="sel has-icon"><span class="lead" data-i="book" data-s="15"></span><select id="cat"><option>workspace</option><option>main</option></select><span class="chev" data-i="chevDown" data-s="14"></span></div></div>
+          <div class="field"><label for="sch">Schema</label><div class="sel has-icon"><span class="lead" data-i="db" data-s="15"></span><select id="sch"><option>default</option><option>analytics</option></select><span class="chev" data-i="chevDown" data-s="14"></span></div></div>
+          <div class="field f-name"><label for="tname">Table name</label><div class="sel has-icon"><span class="lead" data-i="table" data-s="15"></span><input id="tname" value="client_sales_export" spellcheck="false"></div></div>
+          <a href="#" class="adv" title="Not part of this prototype">Advanced attributes</a>
+        </div>
+
+        <div id="alertHost" aria-live="polite"></div>
+
+        <div class="preview-meta"><span data-i="info" data-s="14"></span><span id="previewMeta"></span></div>
+        <div class="table-wrap" id="tableWrap"><table class="preview" id="previewTable"></table></div>
+
+        <div id="createErrHost"></div>
+
+        <div class="footer">
+          <button type="button" class="link" id="cancelBtn">Cancel</button>
+          <button type="button" class="btn primary" id="createBtn">Create table</button>
+        </div>
+      </section>
+
+      <!-- result page -->
+      <section class="done" id="donePage" hidden aria-live="polite"></section>
+    </main>
+  </div>
+</div>
+
+<!-- type menu -->
+<div class="menu" id="typeMenu" role="menu" hidden></div>
+
+<!-- side-by-side review drawer -->
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drTitle" aria-hidden="true">
+  <div class="dr-head">
+    <div>
+      <h2 id="drTitle">Affected rows</h2>
+      <div class="dr-sub" id="drSub"></div>
+    </div>
+    <button type="button" class="icon-btn" id="drClose" aria-label="Close" data-i="x"></button>
+  </div>
+  <div class="dr-sum" id="drSum"></div>
+  <div class="dr-body" id="drBody"></div>
+  <div class="dr-foot">
+    <span class="count" id="drCount"></span>
+    <div class="acts">
+      <button type="button" class="btn" id="drRevert"></button>
+      <button type="button" class="btn primary" id="drKeep">Keep conversion</button>
+    </div>
+  </div>
+</aside>
+
+<script>
+(function(){
+"use strict";
+
+/* ---------- icons ---------- */
+const P = {
+  panel:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>',
+  search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  folder:'<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  clock:'<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+  db:'<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/>',
+  flow:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><path d="M6.5 10v4a3 3 0 0 0 3 3H14"/>',
+  cloud:'<path d="M7 18a4.5 4.5 0 0 1-.5-8.97A6 6 0 0 1 18 9.5a4 4 0 0 1-.5 8.5z"/>',
+  store:'<path d="M4 9l1.5-5h13L20 9"/><path d="M4 9h16v1.5a3 3 0 0 1-5.4 1.8A3 3 0 0 1 12 13.5a3 3 0 0 1-2.6-1.2A3 3 0 0 1 4 10.5z"/><path d="M5.5 13.5V20h13v-6.5"/>',
+  code:'<rect x="4" y="3" width="16" height="18" rx="2"/><path d="m10 10-2 2 2 2M14 10l2 2-2 2"/>',
+  list:'<path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/>',
+  grid:'<rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="5" rx="1.5"/><rect x="13" y="10" width="8" height="11" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/>',
+  bell:'<path d="M6 16v-5a6 6 0 1 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
+  history:'<path d="M3.5 12a8.5 8.5 0 1 0 2.5-6"/><path d="M3 4v4h4"/><path d="M12 8v4l3 2"/>',
+  runs:'<path d="M4 7l2 2 3-3M4 16l2 2 3-3M12 8h8M12 17h8"/>',
+  ingest:'<path d="M12 3v11m0 0-4-4m4 4 4-4"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/>',
+  chevDown:'<path d="m6 9 6 6 6-6"/>',
+  chevRight:'<path d="m9 6 6 6-6 6"/>',
+  x:'<path d="M6 6l12 12M18 6 6 18"/>',
+  info:'<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8h.01"/>',
+  warn:'<path d="M10.3 4.3 2.7 17.5A2 2 0 0 0 4.4 20.5h15.2a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0z"/><path d="M12 9.5v4M12 17h.01"/>',
+  err:'<circle cx="12" cy="12" r="8.5"/><path d="m9 9 6 6M15 9l-6 6"/>',
+  okCircle:'<circle cx="12" cy="12" r="8.5"/><path d="m8 12.5 2.8 2.7L16 10"/>',
+  check:'<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  undo:'<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
+  table:'<rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="M3 10h18M3 15h18M9 10v10"/>',
+  book:'<path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h11"/>',
+  apps:'<circle cx="6" cy="6" r="1.3"/><circle cx="12" cy="6" r="1.3"/><circle cx="18" cy="6" r="1.3"/><circle cx="6" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18" cy="12" r="1.3"/><circle cx="6" cy="18" r="1.3"/><circle cx="12" cy="18" r="1.3"/><circle cx="18" cy="18" r="1.3"/>',
+  cal:'<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>',
+  box:'<rect x="4" y="4" width="16" height="16" rx="2"/><path d="m8 12 3 3 5-6"/>',
+  sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  moon:'<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
+  arrow:'<path d="M5 12h14M13 6l6 6-6 6"/>'
+};
+const FILL = {
+  warnFill:'<path fill="currentColor" d="M10.27 3.5a2 2 0 0 1 3.46 0l8.2 14.2a2 2 0 0 1-1.73 3H3.8a2 2 0 0 1-1.73-3z"/><path d="M12 9v4.6" style="stroke:var(--panel)" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="17.1" r="1.25" style="fill:var(--panel)"/>',
+  dangerFill:'<circle cx="12" cy="12" r="10" fill="currentColor"/><path d="M12 7v6" style="stroke:var(--panel)" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="16.6" r="1.25" style="fill:var(--panel)"/>',
+  checkFill:'<circle cx="12" cy="12" r="10" fill="currentColor"/><path d="m7.8 12.3 2.9 2.9 5.5-5.7" fill="none" style="stroke:var(--panel)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>',
+  infoFill:'<circle cx="12" cy="12" r="10" fill="currentColor"/><path d="M12 11v6" style="stroke:var(--panel)" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.25" style="fill:var(--panel)"/>'
+};
+function icon(name, size){
+  size = size || 16;
+  if (FILL[name]) return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 24 24" aria-hidden="true">'+FILL[name]+'</svg>';
+  if (name === 'logo') {
+    return '<svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="2.5" width="12" height="12" rx="3.5" fill="#3d8fd4"/><rect x="9.5" y="9.5" width="12" height="12" rx="3.5" fill="#2bb3a3" fill-opacity=".85"/></svg>';
+  }
+  return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+P[name]+'</svg>';
+}
+document.querySelectorAll('[data-i]').forEach(function(el){
+  el.insertAdjacentHTML('afterbegin', icon(el.dataset.i, +el.dataset.s || undefined));
+});
+
+/* ---------- helpers ---------- */
+const $ = function(s){ return document.querySelector(s); };
+const esc = function(s){ return String(s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
+const fmt = function(n){ return n.toLocaleString('en-US'); };
+const pct = function(a,b){ return (a/b*100).toFixed(1).replace(/\.0$/,'') + '%'; };
+const pad = function(n){ return String(n).padStart(2,'0'); };
+
+/* ---------- types & conversion ---------- */
+const TYPES = [
+  {id:'bigint', label:'bigint', sql:'BIGINT'},
+  {id:'boolean', label:'boolean', sql:'BOOLEAN'},
+  {id:'date', label:'date', sql:'DATE'},
+  {id:'decimal', label:'decimal(10,0)', sql:'DECIMAL(10,0)'},
+  {id:'double', label:'double', sql:'DOUBLE'},
+  {id:'string', label:'string', sql:'STRING'},
+  {id:'timestamp', label:'timestamp', sql:'TIMESTAMP'}
+];
+const T = {}; TYPES.forEach(function(t){ T[t.id] = t; });
+
+function typeIcon(t){
+  switch(t){
+    case 'bigint': return '<span class="ti" aria-hidden="true"><span>1</span><span class="up">2</span><span class="dn">3</span></span>';
+    case 'string': return '<span class="ti" aria-hidden="true"><span>A</span><span class="up">B</span><span class="dn">C</span></span>';
+    case 'double': case 'decimal': return '<span class="ti dec" aria-hidden="true">.00</span>';
+    case 'boolean': return '<span class="ti" aria-hidden="true">'+icon('box',15)+'</span>';
+    case 'date': return '<span class="ti" aria-hidden="true">'+icon('cal',15)+'</span>';
+    case 'timestamp': return '<span class="ti" aria-hidden="true">'+icon('clock',15)+'</span>';
+  }
+  return '';
+}
+
+const NUM = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
+function validDate(y,m,d){ const dt = new Date(Date.UTC(y,m-1,d)); return dt.getUTCFullYear()===y && dt.getUTCMonth()===m-1 && dt.getUTCDate()===d; }
+function convert(raw, type){
+  const s = String(raw).trim();
+  let m;
+  switch(type){
+    case 'string': return {ok:true, v:raw};
+    case 'bigint':
+      if (/^[+-]?\d+$/.test(s) && Number.isSafeInteger(Number(s))) return {ok:true, v:String(Number(s))};
+      return {ok:false};
+    case 'double':
+      if (NUM.test(s)) return {ok:true, v:String(Number(s))};
+      return {ok:false};
+    case 'decimal':
+      if (NUM.test(s)) { const n = Number(s); const r = Math.sign(n)*Math.round(Math.abs(n)); if (Math.abs(r) < 1e10) return {ok:true, v:String(r === 0 ? 0 : r)}; }
+      return {ok:false};
+    case 'boolean': {
+      const l = s.toLowerCase();
+      if (['true','t','yes','y','1'].indexOf(l) > -1) return {ok:true, v:'true'};
+      if (['false','f','no','n','0'].indexOf(l) > -1) return {ok:true, v:'false'};
+      return {ok:false};
+    }
+    case 'date':
+      m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T].*)?$/);
+      if (m && validDate(+m[1],+m[2],+m[3])) return {ok:true, v:m[1]+'-'+pad(m[2])+'-'+pad(m[3])};
+      return {ok:false};
+    case 'timestamp':
+      m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+      if (m && validDate(+m[1],+m[2],+m[3]) && (!m[4] || (+m[4] < 24 && +m[5] < 60 && (!m[6] || +m[6] < 60))))
+        return {ok:true, v:m[1]+'-'+pad(m[2])+'-'+pad(m[3])+' '+pad(m[4]||0)+':'+pad(m[5]||0)+':'+pad(m[6]||0)};
+      return {ok:false};
+  }
+  return {ok:false};
+}
+
+/* ---------- synthetic file ---------- */
+function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+const rnd = mulberry32(20260922);
+const N = 1000, PREVIEW = 50;
+const FILE = 'client_sales_export.csv';
+const COLS = ['order_id','order_date','region','units','revenue'];
+const INFERRED = {order_id:'bigint', order_date:'date', region:'string', units:'bigint', revenue:'string'};
+const REGIONS = ['Northeast','Southeast','Midwest','Southwest','West','International'];
+const rows = [];
+const day0 = Date.UTC(2025,6,1);
+for (let i = 0; i < N; i++){
+  const d = new Date(day0 + Math.floor(i*92/N)*86400000);
+  const units = 1 + Math.floor(rnd()*40);
+  const price = 8 + rnd()*52;
+  rows.push({order_id:String(10001+i), order_date:d.toISOString().slice(0,10), region:REGIONS[Math.floor(rnd()*REGIONS.length)], units:String(units), revenue:(units*price).toFixed(2)});
+}
+// messy values a real client export would carry, all past the 50-row preview
+(function(){
+  const kinds = [['pending',18],['-',14],['N/A',9],['$',11],[',',7],['TBD',3]];
+  const idx = [];
+  for (let i = PREVIEW; i < N; i++) idx.push(i);
+  for (let i = idx.length-1; i > 0; i--){ const j = Math.floor(rnd()*(i+1)); const t = idx[i]; idx[i] = idx[j]; idx[j] = t; }
+  let k = 0;
+  kinds.forEach(function(kd){
+    for (let c = 0; c < kd[1]; c++){
+      const r = rows[idx[k++]];
+      if (kd[0] === '$') r.revenue = '$' + Number(r.revenue).toLocaleString('en-US',{minimumFractionDigits:2, maximumFractionDigits:2});
+      else if (kd[0] === ',') r.revenue = (1000 + rnd()*3000).toLocaleString('en-US',{minimumFractionDigits:2, maximumFractionDigits:2});
+      else r.revenue = kd[0];
+    }
+  });
+})();
+const fileBytes = rows.reduce(function(s,r){ return s + COLS.map(function(c){ return r[c]; }).join(',').length + 1; }, COLS.join(',').length + 1);
+
+/* ---------- state ---------- */
+const STEPS = [
+  'Change <b>revenue</b> from string to double',
+  'Open <b>Review affected rows</b>',
+  'Revert the change, or keep it',
+  'Set <b>Throw an error</b>, then click <b>Create table</b>',
+  'Switch to <b>Today’s flow</b> and create the table'
+];
+let S;
+function fresh(keep){
+  S = {
+    mode: keep ? keep.mode : 'proposed',
+    types: Object.assign({}, INFERRED),
+    fail: {},
+    onFail: 'null',
+    dismissed: false,
+    mute: false,
+    checking: null,
+    animateAlert: false,
+    flash: null,
+    changedCol: null,
+    page: 'upload',
+    createErr: null,
+    drawerCol: null,
+    drawerShown: 0,
+    steps: keep ? keep.steps : [false,false,false,false,false]
+  };
+  COLS.forEach(function(c){ S.fail[c] = []; });
+}
+fresh();
+function failuresFor(c){
+  const t = S.types[c]; const out = [];
+  if (t === 'string') return out;
+  for (let i = 0; i < N; i++) if (!convert(rows[i][c], t).ok) out.push(i);
+  return out;
+}
+function failingCols(){ return COLS.filter(function(c){ return S.fail[c].length > 0; }); }
+function step(n){ if (!S.steps[n]) { S.steps[n] = true; renderGuide(); } }
+
+/* ---------- render: table ---------- */
+function renderTable(){
+  const proposed = S.mode === 'proposed';
+  const err = S.onFail === 'error';
+  let h = '<thead><tr>';
+  COLS.forEach(function(c){
+    const t = S.types[c]; const f = S.fail[c];
+    const checking = S.checking === c;
+    h += '<th scope="col"><div class="th" data-col="'+c+'">'
+      + '<button type="button" class="th-btn" data-col="'+c+'" aria-haspopup="menu" aria-label="'+c+', type '+T[t].label+'. Change type">'+typeIcon(t)+'<span class="th-name">'+c+'</span></button>';
+    if (proposed && f.length && !checking)
+      h += '<button type="button" class="badge'+(err?' err':'')+'" data-review="'+c+'" title="'+fmt(f.length)+' values can’t be converted to '+T[t].sql+'. Click to review.">'+icon('warn',12)+fmt(f.length)+'</button>';
+    h += '<span class="th-end">'+(checking && proposed ? '<span class="spinner" role="status" aria-label="Checking values"></span>' : icon('chevDown',15))+'</span></div></th>';
+  });
+  h += '</tr></thead><tbody>';
+  for (let i = 0; i < PREVIEW; i++){
+    h += '<tr>';
+    COLS.forEach(function(c){
+      const raw = rows[i][c]; const t = S.types[c]; const r = convert(raw, t);
+      const cls = c === S.changedCol ? ' class="col-changed"' : '';
+      if (r.ok) h += '<td'+cls+'>'+esc(r.v)+'</td>';
+      else if (!proposed) h += '<td'+cls+'><span class="null">null</span></td>';
+      else if (err) h += '<td'+cls+'><span class="cell-err" title="‘'+esc(raw)+'’ can’t be converted to '+T[t].sql+'">'+icon('err',12)+esc(raw)+'</span></td>';
+      else h += '<td'+cls+'><span class="null flagged" title="‘'+esc(raw)+'’ can’t be converted to '+T[t].sql+'">null</span></td>';
+    });
+    h += '</tr>';
+  }
+  h += '</tbody>';
+  const tbl = $('#previewTable');
+  tbl.innerHTML = h;
+  tbl.classList.toggle('just-changed', !!S.changedCol);
+  S.changedCol = null;
+  $('#previewMeta').textContent = 'Previewing '+PREVIEW+' rows, '+COLS.length+' columns';
+  $('#previewMeta').parentNode.title = 'The file has '+fmt(N)+' rows. Only the first '+PREVIEW+' are shown here.';
+}
+
+/* ---------- render: alert ---------- */
+function previewNote(f){
+  const inPrev = f.filter(function(i){ return i < PREVIEW; }).length;
+  if (inPrev === 0) return 'None of them are in the '+PREVIEW+'-row preview.';
+  if (inPrev === f.length) return 'All of them are in the preview below.';
+  return fmt(inPrev)+' of them '+(inPrev === 1 ? 'is' : 'are')+' in the preview below.';
+}
+function convCode(c){ return '<span class="code">'+T[INFERRED[c]].sql+' '+icon('arrow',11)+' '+T[S.types[c]].sql+'</span>'; }
+function rowActions(c){
+  return '<button type="button" class="btn sm" data-review="'+c+'">Review affected rows</button>'
+    + '<button type="button" class="btn sm" data-revert="'+c+'">'+icon('undo',14)+'Revert to '+T[INFERRED[c]].sql+'</button>';
+}
+function consequence(c){
+  return S.onFail === 'error'
+    ? 'Creating the table will fail until these values are fixed or the type is reverted.'
+    : 'They’ll be set to NULL ('+pct(S.fail[c].length,N)+' of the column).';
+}
+function renderAlert(){
+  const host = $('#alertHost');
+  if (S.mode !== 'proposed' || S.page !== 'upload'){ host.innerHTML = ''; return; }
+  const err = S.onFail === 'error';
+  if (S.checking){
+    host.innerHTML = '<div class="alert info" role="status"><span class="alert-icon"><span class="spinner"></span></span><div class="alert-body">Checking all '+fmt(N)+' values in <b>'+S.checking+'</b> against '+T[S.types[S.checking]].sql+'…</div></div>';
+    return;
+  }
+  const F = failingCols();
+  if (!F.length){
+    host.innerHTML = S.flash ? '<div class="alert ok pop" role="status"><span class="alert-icon">'+icon('checkFill',16)+'</span><div class="alert-body">'+S.flash+'</div></div>' : '';
+    return;
+  }
+  if (S.dismissed){
+    host.innerHTML = '<div><button type="button" class="btn sm '+(err?'err-btn':'warn-btn')+'" id="alertShow" style="margin-top:16px">'+icon(err?'dangerFill':'warnFill',14)+'Show conversion '+(F.length>1?'warnings ('+F.length+')':'warning')+'</button></div>';
+    return;
+  }
+  let title, body;
+  if (F.length === 1){
+    const c = F[0], f = S.fail[c];
+    title = fmt(f.length)+' of '+fmt(N)+' values in '+c+' can’t be converted to '+T[S.types[c]].sql;
+    body = '<div class="alert-desc">'+consequence(c)+' '+previewNote(f)+'</div>'
+         + '<div class="ar-actions">'+rowActions(c)+'</div>';
+  } else {
+    title = 'Values in '+F.length+' columns can’t be converted';
+    body = '<ul class="alert-rows">' + F.map(function(c){
+      const f = S.fail[c];
+      return '<li><div class="ar-text"><b>'+c+'</b> '+convCode(c)+' '+fmt(f.length)+' of '+fmt(N)+' values. '+consequence(c)+' '+previewNote(f)+'</div><div class="ar-actions">'+rowActions(c)+'</div></li>';
+    }).join('') + '</ul>';
+  }
+  host.innerHTML = '<div class="alert '+(err?'err':'warn')+(S.animateAlert?' pop':'')+'" role="alert">'
+    + '<span class="alert-icon">'+icon(err?'dangerFill':'warnFill',16)+'</span>'
+    + '<div class="alert-body"><div class="alert-title">'+title+'</div>'+body
+    + '<div class="alert-settings">'
+    +   '<label class="inline-field">When a value can’t be converted <span class="sel"><select id="onFail"><option value="null"'+(err?'':' selected')+'>Default to NULL</option><option value="error"'+(err?' selected':'')+'>Throw an error</option></select><span class="chev">'+icon('chevDown',14)+'</span></span></label>'
+    +   '<label class="check"><input type="checkbox" id="mute"'+(S.mute?' checked':'')+'> Don’t show this alert on future uploads</label>'
+    +   (S.mute ? '<div class="mute-note">You’ll still see this one. Turn it back on anytime in Settings › Data ingestion.</div>' : '')
+    + '</div></div>'
+    + '<button type="button" class="alert-close" id="alertX" aria-label="Close alert">'+icon('x',14)+'</button>'
+    + '</div>';
+  S.animateAlert = false;
+}
+
+/* ---------- render: create error ---------- */
+function renderCreateErr(){
+  const host = $('#createErrHost');
+  const e = S.createErr;
+  if (!e || S.mode !== 'proposed'){ host.innerHTML = ''; return; }
+  host.innerHTML = '<div class="alert err pop" role="alert"><span class="alert-icon">'+icon('dangerFill',16)+'</span>'
+    + '<div class="alert-body"><div class="alert-title">Table not created</div>'
+    + '<div class="pre">[CAST_INVALID_INPUT] The value \''+esc(e.value)+'\' of the type "STRING" cannot be cast to "'+T[S.types[e.col]].sql+'" because it is malformed. Correct the value as per the syntax, or change its target type.</div>'
+    + '<div class="meta">Column <b>'+e.col+'</b>, row '+fmt(e.row+1)+' of the file. '+fmt(S.fail[e.col].length)+' values fail in total.</div>'
+    + '<div class="ar-actions"><button type="button" class="btn sm" data-review="'+e.col+'">Review affected rows</button><button type="button" class="btn sm" id="useNull">Default to NULL instead</button></div></div>'
+    + '<button type="button" class="alert-close" id="ceX" aria-label="Close error">'+icon('x',14)+'</button></div>';
+}
+
+/* ---------- render: done page ---------- */
+function renderDone(){
+  const proposed = S.mode === 'proposed';
+  const name = ($('#tname').value || 'client_sales_export').trim();
+  const fq = $('#cat').value + '.' + $('#sch').value + '.' + name;
+  const F = failingCols();
+  const lost = F.reduce(function(s,c){ return s + S.fail[c].length; }, 0);
+  let rowsH = '';
+  COLS.forEach(function(c){
+    const t = S.types[c]; const f = S.fail[c];
+    const note = (proposed && f.length) ? '<span class="note-warn">'+icon('warnFill',14)+fmt(f.length)+' values set to NULL (failed '+T[t].sql+' conversion, flagged before creation)</span>' : '';
+    rowsH += '<tr><td><b>'+c+'</b></td><td><span class="tcell">'+typeIcon(t)+T[t].label+'</span></td><td>'+note+'</td></tr>';
+  });
+  let annot = '';
+  if (!proposed){
+    if (lost){
+      const parts = F.map(function(c){ return fmt(S.fail[c].length)+' of '+fmt(N)+' values in <b>'+c+'</b> ('+pct(S.fail[c].length,N)+')'; }).join(', ');
+      annot = '<div class="annot"><span class="proto-tag">What the user never saw</span>'
+        + '<p class="big">'+parts+' became NULL during this import.</p>'
+        + '<p>Nothing in the flow mentioned it. The 50-row preview looked clean, the table was created normally, and the missing values will only surface later, if someone notices.</p>'
+        + '<button type="button" class="btn" id="replayBtn">Replay with the proposed flow</button></div>';
+    } else {
+      annot = '<div class="annot"><span class="proto-tag">Nothing lost this time</span><p>No type change failed. Try changing <b>revenue</b> from string to double first.</p><button type="button" class="btn" id="againBtn">Back to the upload</button></div>';
+    }
+  }
+  $('#donePage').innerHTML = '<div class="done-inner">'
+    + '<div class="done-head">'+icon('checkFill',22)+'<h2>Table created</h2></div>'
+    + '<div class="fq">'+esc(fq)+'</div>'
+    + '<div class="meta">'+fmt(N)+' rows · '+COLS.length+' columns · from '+FILE+'</div>'
+    + '<table class="schema"><thead><tr><th>Column</th><th>Type</th><th>Notes</th></tr></thead><tbody>'+rowsH+'</tbody></table>'
+    + '<div class="acts"><button type="button" class="btn primary" id="anotherBtn">Upload another file</button></div>'
+    + annot + '</div>';
+}
+
+/* ---------- render: drawer ---------- */
+const PAGE = 30;
+function drawerRowsHTML(from, to){
+  const c = S.drawerCol; const t = S.types[c]; const err = S.onFail === 'error';
+  let h = '';
+  S.fail[c].slice(from, to).forEach(function(i){
+    h += '<tr><td>'+fmt(i+1)+'</td><td>'+esc(rows[i].order_id)+'</td><td><span class="code">'+esc(rows[i][c])+'</span></td><td class="arrow">'+icon('arrow',14)+'</td><td>'
+      + (err ? '<span class="tag-err">'+icon('err',12)+'error</span>' : '<span class="tag-null">NULL</span>') + '</td></tr>';
+  });
+  return h;
+}
+function openDrawer(c){
+  S.drawerCol = c; S.drawerShown = Math.min(PAGE, S.fail[c].length);
+  const t = S.types[c]; const from = T[INFERRED[c]].sql; const f = S.fail[c]; const err = S.onFail === 'error';
+  $('#drTitle').textContent = 'Affected rows in ' + c;
+  $('#drSub').innerHTML = convCode(c)+'<span>'+FILE+'</span>';
+  $('#drSum').innerHTML = '<div class="alert '+(err?'err':'warn')+'"><span class="alert-icon">'+icon(err?'dangerFill':'warnFill',16)+'</span><div class="alert-body"><div class="alert-title">'+fmt(f.length)+' of '+fmt(N)+' values can’t be converted to '+T[t].sql+'</div><div class="alert-desc">'+consequence(c)+' '+previewNote(f)+'</div></div></div>';
+  $('#drBody').innerHTML = '<table class="dt"><thead><tr><th>Row</th><th>order_id</th><th>'+c+' in file</th><th class="arrow"><span class="sr">becomes</span></th><th>As '+T[t].sql+'</th></tr></thead><tbody id="drRows">'+drawerRowsHTML(0, S.drawerShown)+'</tbody></table><div class="dr-more" id="drMore"></div>';
+  $('#drBody').scrollTop = 0;
+  $('#drRevert').innerHTML = icon('undo',14)+'Revert to '+from;
+  updateDrawerCount();
+  $('#drawer').classList.add('open'); $('#drawer').setAttribute('aria-hidden','false');
+  $('#scrim').classList.add('open');
+  setTimeout(function(){ $('#drClose').focus(); }, 30);
+  step(1);
+}
+function updateDrawerCount(){
+  const total = S.fail[S.drawerCol].length;
+  $('#drCount').textContent = 'Showing '+fmt(S.drawerShown)+' of '+fmt(total);
+  $('#drMore').textContent = S.drawerShown < total ? 'Scroll to load more' : 'End of affected rows';
+}
+function loadMore(){
+  if (!S.drawerCol) return;
+  const total = S.fail[S.drawerCol].length;
+  if (S.drawerShown >= total) return;
+  const next = Math.min(total, S.drawerShown + PAGE);
+  $('#drRows').insertAdjacentHTML('beforeend', drawerRowsHTML(S.drawerShown, next));
+  S.drawerShown = next; updateDrawerCount();
+}
+function closeDrawer(){
+  const was = S.drawerCol;
+  $('#drawer').classList.remove('open'); $('#drawer').setAttribute('aria-hidden','true');
+  $('#scrim').classList.remove('open');
+  S.drawerCol = null;
+  if (was){ const b = document.querySelector('[data-review="'+was+'"]'); if (b) b.focus(); }
+}
+
+/* ---------- render: guide & chrome ---------- */
+function renderGuide(){
+  $('#guideList').innerHTML = STEPS.map(function(s,i){ return '<li class="'+(S.steps[i]?'is-done':'')+'"><span class="num">'+(S.steps[i]?icon('check',11):(i+1))+'</span><span>'+s+'</span></li>'; }).join('');
+  $('#guideCount').textContent = S.steps.filter(Boolean).length + '/' + STEPS.length;
+}
+function renderChrome(){
+  document.querySelectorAll('.seg button').forEach(function(b){ b.setAttribute('aria-pressed', String(b.dataset.mode === S.mode)); });
+  $('#uploadPage').hidden = S.page !== 'upload';
+  $('#donePage').hidden = S.page !== 'done';
+  $('#createBtn').disabled = !!S.checking;
+}
+function render(){
+  renderChrome();
+  if (S.page === 'upload'){ renderAlert(); renderTable(); renderCreateErr(); }
+  else renderDone();
+  renderGuide();
+}
+
+/* ---------- actions ---------- */
+let flashTimer = null;
+function setType(c, t){
+  if (S.types[c] === t) return;
+  S.types[c] = t; S.createErr = null; S.flash = null; S.changedCol = c;
+  if (c === 'revenue' && t !== 'string') step(0);
+  if (S.mode === 'current'){ S.fail[c] = failuresFor(c); render(); return; }
+  S.checking = c; render();
+  setTimeout(function(){
+    S.fail[c] = failuresFor(c); S.checking = null;
+    if (S.fail[c].length){ S.dismissed = false; S.animateAlert = true; }
+    render();
+  }, 480);
+}
+function revert(c){
+  const from = T[INFERRED[c]].sql;
+  S.types[c] = INFERRED[c]; S.fail[c] = []; S.createErr = null; S.changedCol = c;
+  step(2);
+  if (!failingCols().length){
+    S.flash = '<b>'+c+'</b> is back to '+from+'. All values will import as they appear in the file.';
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(function(){ S.flash = null; renderAlert(); }, 4000);
+  }
+  render();
+}
+function createTable(){
+  if (S.checking) return;
+  S.createErr = null;
+  if (S.mode === 'proposed' && S.onFail === 'error'){
+    const F = failingCols();
+    if (F.length){
+      const c = F[0]; const i = S.fail[c][0];
+      S.createErr = {col:c, row:i, value:rows[i][c]};
+      step(3); render();
+      const el = $('#createErrHost'); if (el.scrollIntoView) el.scrollIntoView({block:'nearest'});
+      return;
+    }
+  }
+  if (S.mode === 'current') step(4);
+  S.page = 'done'; render();
+  $('#main').scrollTop = 0; window.scrollTo(0,0);
+}
+function setMode(m){
+  if (S.mode === m) return;
+  S.mode = m; S.createErr = null; S.flash = null; S.checking = null;
+  COLS.forEach(function(c){ S.fail[c] = failuresFor(c); });
+  S.page = 'upload';
+  if (m === 'proposed' && failingCols().length){ S.dismissed = false; S.animateAlert = true; }
+  closeMenu(); if (S.drawerCol) closeDrawer();
+  render();
+}
+function resetAll(keepProgress){
+  fresh(keepProgress ? S : null);
+  if (!keepProgress) S.mode = 'proposed';
+  $('#tname').value = 'client_sales_export';
+  closeMenu(); if (S.drawerCol) closeDrawer();
+  render();
+}
+
+/* ---------- type menu ---------- */
+let menuCol = null;
+function openMenu(c, anchor){
+  menuCol = c;
+  const cur = S.types[c];
+  const m = $('#typeMenu');
+  m.setAttribute('aria-label', 'Column type for ' + c);
+  m.innerHTML = TYPES.map(function(t){
+    return '<button type="button" role="menuitemradio" aria-checked="'+(t.id===cur)+'" data-type="'+t.id+'">'+typeIcon(t.id)+'<span>'+t.label+'</span>'+(t.id===cur ? '<span class="tick">'+icon('check',15)+'</span>' : '')+'</button>';
+  }).join('');
+  m.hidden = false;
+  positionMenu();
+  const sel = m.querySelector('[aria-checked="true"]') || m.querySelector('button');
+  sel.focus({preventScroll:true});
+}
+function positionMenu(){
+  if (!menuCol) return;
+  const m = $('#typeMenu');
+  const a = document.querySelector('.th[data-col="'+menuCol+'"]');
+  if (!a){ closeMenu(); return; }
+  const r = a.getBoundingClientRect(), wr = $('#tableWrap').getBoundingClientRect();
+  if (r.right < wr.left + 16 || r.left > wr.right - 16 || r.bottom < 0 || r.top > window.innerHeight){ closeMenu(); return; }
+  const w = m.offsetWidth, h = m.offsetHeight;
+  let left = Math.min(Math.max(r.left, wr.left), window.innerWidth - w - 8); left = Math.max(8, left);
+  let top = r.bottom + 4; if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 4);
+  m.style.left = left + 'px'; m.style.top = top + 'px';
+}
+function closeMenu(returnFocus){
+  const m = $('#typeMenu');
+  if (m.hidden) return;
+  m.hidden = true;
+  if (returnFocus && menuCol){ const b = document.querySelector('.th-btn[data-col="'+menuCol+'"]'); if (b) b.focus(); }
+  menuCol = null;
+}
+
+/* ---------- events ---------- */
+document.addEventListener('click', function(e){
+  const t = e.target;
+  const rv = t.closest('[data-review]');
+  if (rv){ e.preventDefault(); closeMenu(); openDrawer(rv.dataset.review); return; }
+  const rb = t.closest('[data-revert]');
+  if (rb){ revert(rb.dataset.revert); return; }
+  const item = t.closest('#typeMenu button[data-type]');
+  if (item){ const c = menuCol; closeMenu(); setType(c, item.dataset.type); const b = document.querySelector('.th-btn[data-col="'+c+'"]'); if (b) b.focus(); return; }
+  const th = t.closest('.th');
+  if (th){ const c = th.dataset.col; if (menuCol === c) closeMenu(); else openMenu(c, th); return; }
+  if (!t.closest('#typeMenu')) closeMenu();
+  if (t.closest('a[href="#"]')) e.preventDefault();
+
+  switch (t.closest('button') && t.closest('button').id){
+    case 'alertX': S.dismissed = true; renderAlert(); { const p = $('#alertShow'); if (p) p.focus(); } break;
+    case 'alertShow': S.dismissed = false; S.animateAlert = true; renderAlert(); break;
+    case 'ceX': S.createErr = null; renderCreateErr(); break;
+    case 'useNull': S.onFail = 'null'; S.createErr = null; render(); break;
+    case 'createBtn': createTable(); break;
+    case 'cancelBtn': resetAll(true); break;
+    case 'anotherBtn': resetAll(true); break;
+    case 'againBtn': S.page = 'upload'; render(); break;
+    case 'replayBtn': setMode('proposed'); break;
+    case 'drClose': closeDrawer(); break;
+    case 'drKeep': step(2); closeDrawer(); break;
+    case 'drRevert': { const c = S.drawerCol; closeDrawer(); revert(c); } break;
+    case 'resetBtn': resetAll(false); break;
+    case 'navBtn': toggleNav(); break;
+    case 'themeBtn': toggleTheme(); break;
+    case 'guideBtn': toggleGuide(); break;
+    case 'guideClose': toggleGuide(false); break;
+  }
+  const seg = t.closest('.seg button');
+  if (seg) setMode(seg.dataset.mode);
+});
+document.addEventListener('change', function(e){
+  if (e.target.id === 'onFail'){ S.onFail = e.target.value; S.createErr = null; renderAlert(); renderTable(); renderCreateErr(); const s = $('#onFail'); if (s) s.focus(); }
+  if (e.target.id === 'mute'){ S.mute = e.target.checked; renderAlert(); const m = $('#mute'); if (m) m.focus(); }
+});
+document.addEventListener('keydown', function(e){
+  const m = $('#typeMenu');
+  if (!m.hidden){
+    const items = Array.prototype.slice.call(m.querySelectorAll('button'));
+    const i = items.indexOf(document.activeElement);
+    if (e.key === 'Escape'){ e.preventDefault(); closeMenu(true); return; }
+    if (e.key === 'ArrowDown'){ e.preventDefault(); items[(i+1) % items.length].focus(); return; }
+    if (e.key === 'ArrowUp'){ e.preventDefault(); items[(i-1+items.length) % items.length].focus(); return; }
+    if (e.key === 'Tab'){ closeMenu(); }
+  }
+  if (e.key === 'Escape' && S.drawerCol){ closeDrawer(); return; }
+});
+$('#drBody').addEventListener('scroll', function(){
+  const b = $('#drBody');
+  if (b.scrollTop + b.clientHeight > b.scrollHeight - 60) loadMore();
+});
+$('#scrim').addEventListener('click', closeDrawer);
+$('#tableWrap').addEventListener('scroll', positionMenu);
+window.addEventListener('scroll', positionMenu, {passive:true});
+window.addEventListener('resize', positionMenu);
+
+function toggleNav(){
+  const sh = $('#shell');
+  if (window.innerWidth <= 900) sh.classList.toggle('nav-open');
+  else { sh.classList.toggle('nav-closed'); placeGuide(); }
+}
+document.addEventListener('click', function(e){
+  const sh = $('#shell');
+  if (sh.classList.contains('nav-open') && !e.target.closest('.sidebar') && !e.target.closest('#navBtn')) sh.classList.remove('nav-open');
+});
+
+function applyThemeIcon(){
+  const dark = document.documentElement.getAttribute('data-theme') !== 'light';
+  $('#themeIcon').innerHTML = icon(dark ? 'sun' : 'moon', 14);
+  $('#themeBtn').setAttribute('aria-label', dark ? 'Switch to light theme' : 'Switch to dark theme');
+}
+function toggleTheme(){
+  const html = document.documentElement;
+  html.setAttribute('data-theme', html.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
+  applyThemeIcon();
+}
+let guideOpen = window.innerWidth > 900;
+function placeGuide(){
+  const g = $('#guide'), side = $('.sidebar');
+  const docked = window.innerWidth > 900 && !$('#shell').classList.contains('nav-closed');
+  if (docked){ if (g.parentNode !== side) side.appendChild(g); g.classList.remove('floating'); }
+  else { if (g.parentNode !== document.body) document.body.appendChild(g); g.classList.add('floating'); }
+  g.hidden = !guideOpen;
+  $('#guideBtn').setAttribute('aria-expanded', String(guideOpen));
+}
+function toggleGuide(force){
+  guideOpen = typeof force === 'boolean' ? force : !guideOpen;
+  placeGuide();
+}
+window.addEventListener('resize', placeGuide);
+
+/* ---------- init ---------- */
+$('#fileName').textContent = FILE + ' uploaded';
+$('#fileSize').textContent = (fileBytes/1024).toFixed(1) + 'KB';
+applyThemeIcon();
+placeGuide();
+render();
+})();
+</script>
+</body>
+</html>
